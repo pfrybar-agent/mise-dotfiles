@@ -20,12 +20,10 @@ alias kx='kubectx'
 # tinted-shell
 [ -s "$HOME/.tinted-shell" ] && source "$HOME/.tinted-shell"
 
-# asdf
-asdf_dir="${ASDF_DATA_DIR:-$HOME/.asdf}"
-[ -d "$asdf_dir/completions" ] && fpath=("$asdf_dir/completions" $fpath)
-
-# asdf java - set JAVA_HOME
-[ -s "$asdf_dir/plugins/java/set-java-home.zsh" ] && source "$asdf_dir/plugins/java/set-java-home.zsh"
+# mise: put the active tool versions on PATH and switch them by directory
+if (( $+commands[mise] )); then
+  eval "$(mise activate zsh)"
+fi
 
 # prezto
 prezto_dir="${ZDOTDIR:-$HOME}/.zprezto"
