@@ -1,0 +1,5 @@
+brew "emacs"
+brew "git"
+brew "mise"
+brew "tmux"
+brew "zsh"

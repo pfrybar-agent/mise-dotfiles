@@ -1,0 +1,45 @@
+[user]
+	name = Paul Frybarger
+	email = pfrybar@frymail.net
+	signingKey = ~/.ssh/git_signing_key
+[gpg]
+	format = ssh
+[commit]
+	gpgSign = true
+[pager]
+	branch = false
+[core]
+	pager = diff-so-fancy | less --tabs=4 -R
+[color]
+	ui = auto
+[color "diff-highlight"]
+	oldNormal = red bold
+	oldHighlight = red bold 52
+	newNormal = green bold
+	newHighlight = green bold 22
+[color "diff"]
+	meta = cyan
+	frag = magenta bold
+	commit = yellow bold
+	old = red bold
+	new = green bold
+	whitespace = red reverse
+[diff-so-fancy]
+	markEmptyLines = false
+[init]
+	defaultBranch = main
+[fetch]
+	prune = true
+[merge]
+	conflictStyle = zdiff3
+[pull]
+	ff = only
+[push]
+	autoSetupRemote = true
+; let gh supply github credentials when it is installed
+[credential "https://github.com"]
+	helper = "!f() { command -v gh >/dev/null || exit 0; exec gh auth git-credential \"$@\"; }; f"
+; ~/.gitconfig.local overrides anything above, such as user.email on a work
+; machine, so keep this include last
+[include]
+	path = ~/.gitconfig.local

@@ -1,0 +1,291 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dotfiles:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            bison build-essential curl emacs-nox git libevent-dev \
+            libncurses-dev pkg-config shellcheck zsh
+
+      - name: Build the minimum supported tmux version
+        env:
+          TMUX_VERSION: "3.5"
+        run: |
+          curl --fail --location --silent --show-error \
+            "https://github.com/tmux/tmux/releases/download/${TMUX_VERSION}/tmux-${TMUX_VERSION}.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/tmux-${TMUX_VERSION}"
+          ./configure --prefix="$HOME/.local"
+          make --jobs="$(nproc)"
+          make install
+          "$HOME/.local/bin/tmux" -V
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Check configuration syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bash -n install.sh
+          bash -n post-install.sh
+          shellcheck install.sh post-install.sh
+          sh -n tinted-shell
+          for file in zshenv zprofile zshrc zpreztorc zlogin zlogout; do
+            zsh -n "$file"
+          done
+          git config --file gitconfig --list >/dev/null
+
+          emacs_home="$(mktemp -d)"
+          trap 'rm -rf "$emacs_home"' EXIT
+          HOME="$emacs_home" emacs --batch --quick \
+            --eval '(package-initialize)' --load "$PWD/emacs"
+
+      - name: Test installer
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test_home="$(mktemp -d)"
+          conflict_home="$(mktemp -d)"
+          trap 'rm -rf "$test_home" "$conflict_home"' EXIT
+
+          # Exercise backup creation as well as ordinary link creation.
+          printf 'original zshrc\n' > "$test_home/.zshrc"
+          HOME="$test_home" ./install.sh
+          test "$(<"$test_home/.zshrc.old")" = 'original zshrc'
+          test ! -e "$test_home/.Brewfile"
+          test ! -e "$test_home/.post-install.sh"
+          test ! -e "$test_home/.AGENTS.md"
+          test ! -e "$test_home/.CLAUDE.md"
+
+          expected=(
+            emacs gitconfig tinted-shell tmux.conf zlogin zlogout
+            zpreztorc zprofile zshenv zshrc
+          )
+          for file in "${expected[@]}"; do
+            target="$test_home/.$file"
+            test -L "$target"
+            test "$(readlink -f "$target")" = "$PWD/$file"
+          done
+          test "$(find "$test_home" -maxdepth 1 -type l | wc -l)" -eq "${#expected[@]}"
+          test -d "$test_home/.claude" && test ! -L "$test_home/.claude"
+          test "$(readlink -f "$test_home/.claude/settings.json")" = \
+            "$PWD/claude/settings.json"
+
+          # A second run must leave every correct link unchanged.
+          HOME="$test_home" ./install.sh
+          for file in "${expected[@]}"; do
+            test "$(readlink -f "$test_home/.$file")" = "$PWD/$file"
+          done
+
+          # Never overwrite an existing backup.
+          printf 'current\n' > "$conflict_home/.zshrc"
+          printf 'backup\n' > "$conflict_home/.zshrc.old"
+          error_log="$conflict_home/install-error.log"
+          if HOME="$conflict_home" ./install.sh >"$error_log" 2>&1; then
+            echo 'installer unexpectedly overwrote an existing backup' >&2
+            exit 1
+          fi
+          grep -q 'refusing to overwrite backup' "$error_log"
+          test "$(<"$conflict_home/.zshrc")" = 'current'
+          test "$(<"$conflict_home/.zshrc.old")" = 'backup'
+
+      - name: Test Git and Emacs configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test_home="$(mktemp -d)"
+          trap 'rm -rf "$test_home"' EXIT
+          HOME="$test_home" ./install.sh >/dev/null
+
+          git_config() {
+            HOME="$test_home" git config --global --includes --get "$1"
+          }
+          test "$(git_config gpg.format)" = ssh
+          test "$(git_config commit.gpgSign)" = true
+          test "$(git_config color.ui)" = auto
+          test "$(git_config init.defaultBranch)" = main
+          test "$(git_config fetch.prune)" = true
+          test "$(git_config merge.conflictStyle)" = zdiff3
+          test "$(git_config pull.ff)" = only
+          test "$(git_config push.autoSetupRemote)" = true
+          test "$(git_config core.pager)" = 'diff-so-fancy | less --tabs=4 -R'
+          test "$(git_config user.name)" = 'Paul Frybarger'
+          test "$(git_config user.email)" = pfrybar@frymail.net
+          test "$(git_config user.signingKey)" = '~/.ssh/git_signing_key'
+
+          # ~/.gitconfig.local is included last, so it overrides tracked values.
+          git config --file "$test_home/.gitconfig.local" user.email work@example.com
+          test "$(git_config user.email)" = work@example.com
+
+          # gh supplies GitHub credentials; a stub stands in for it.
+          stub_bin="$test_home/stub-bin"
+          mkdir -p "$stub_bin"
+          printf '%s\n' '#!/bin/sh' \
+            '[ "$*" = "auth git-credential get" ] && printf "username=stub\npassword=from-gh\n"' \
+            > "$stub_bin/gh"
+          chmod +x "$stub_bin/gh"
+          printf 'protocol=https\nhost=github.com\n\n' \
+            | HOME="$test_home" PATH="$stub_bin:$PATH" GIT_TERMINAL_PROMPT=0 \
+              git credential fill | grep -qx 'password=from-gh'
+
+          HOME="$test_home" emacs --batch --quick \
+            --eval '(package-initialize)' --load "$PWD/emacs" \
+            --eval "(unless (equal package-selected-packages '(base16-theme markdown-mode yaml-mode)) (kill-emacs 1))" \
+            --eval "(unless (equal custom-file (locate-user-emacs-file \"custom.el\")) (kill-emacs 1))" \
+            --eval "(unless (equal (cdr (assoc \".\" backup-directory-alist)) (locate-user-emacs-file \"backups\")) (kill-emacs 1))"
+
+      - name: Test post-install.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test_home="$(mktemp -d)"
+          trap 'rm -rf "$test_home"' EXIT
+          HOME="$test_home" ./install.sh >/dev/null
+
+          # An existing ~/.claude.json keeps its other keys.
+          printf '{"numStartups": 3}\n' > "$test_home/.claude.json"
+
+          # The first run installs the selected packages; the second has nothing to do.
+          HOME="$test_home" ./post-install.sh
+          HOME="$test_home" ./post-install.sh
+
+          HOME="$test_home" emacs --batch --quick \
+            --eval '(package-initialize)' --load "$PWD/emacs" \
+            --eval "(unless (memq 'base16-tomorrow-night custom-enabled-themes) (kill-emacs 1))"
+
+          jq -e '.hasCompletedOnboarding == true and .numStartups == 3' \
+            "$test_home/.claude.json"
+
+          # A missing ~/.claude.json is created privately.
+          rm "$test_home/.claude.json"
+          HOME="$test_home" ./post-install.sh
+          jq -e '.hasCompletedOnboarding == true' "$test_home/.claude.json"
+          test "$(stat -c %a "$test_home/.claude.json")" = 600
+
+      - name: Test tmux configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          socket="dotfiles-test-$RANDOM"
+          trap 'tmux -L "$socket" kill-server 2>/dev/null || true' EXIT
+          tmux -L "$socket" -f "$PWD/tmux.conf" new-session -d
+
+          test "$(tmux -L "$socket" show-options -gv prefix)" = C-Space
+          test "$(tmux -L "$socket" show-options -gv history-limit)" = 100000
+          test "$(tmux -L "$socket" show-options -sv escape-time)" = 10
+          test "$(tmux -L "$socket" show-options -gv mouse)" = on
+          test "$(tmux -L "$socket" show-options -sv extended-keys)" = on
+          test "$(tmux -L "$socket" show-options -sv extended-keys-format)" = csi-u
+          test "$(tmux -L "$socket" show-options -sv focus-events)" = on
+          test "$(tmux -L "$socket" show-options -sv set-clipboard)" = on
+          test "$(tmux -L "$socket" show-options -gv allow-passthrough)" = on
+          test "$(tmux -L "$socket" show-options -gv renumber-windows)" = on
+          grep -Fxq 'xterm*:extkeys' <<< \
+            "$(tmux -L "$socket" show-options -sv terminal-features)"
+          grep -q 'send-prefix' <<< \
+            "$(tmux -L "$socket" list-keys -T prefix C-Space)"
+
+      - name: Test Prezto and Atuin initialization
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test_home="$(mktemp -d)"
+          trap 'rm -rf "$test_home"' EXIT
+          HOME="$test_home" ./install.sh >/dev/null
+          git clone --depth 1 --recurse-submodules --shallow-submodules \
+            https://github.com/sorin-ionescu/prezto.git \
+            "$test_home/.zprezto"
+
+          HOME="$test_home" ZDOTDIR="$test_home" TERM=xterm-256color zsh -lic '
+            for module in environment editor history utility completion syntax-highlighting prompt; do
+              zstyle -t ":prezto:module:$module" loaded || exit 1
+            done
+            [[ $options[CORRECT] == off && $options[CORRECT_ALL] == off ]]
+            [[ $prompt_theme == pure ]]
+            [[ $PURE_GIT_UNTRACKED_DIRTY == 0 ]]
+            ! zstyle -t :prezto:module:python loaded
+          '
+
+          mkdir -p "$test_home/.local/bin"
+          cat > "$test_home/.local/bin/atuin" <<'EOF'
+          #!/bin/sh
+          if [ "$#" -eq 3 ] && [ "$1" = init ] && [ "$2" = zsh ] && [ "$3" = --disable-up-arrow ]; then
+            printf '%s\n' 'typeset -g ATUIN_TEST_INITIALIZED=yes'
+          else
+            exit 1
+          fi
+          EOF
+          chmod +x "$test_home/.local/bin/atuin"
+
+          HOME="$test_home" ZDOTDIR="$test_home" TERM=xterm-256color \
+            zsh -lic '[[ $ATUIN_TEST_INITIALIZED == yes ]]'
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Test installer and Homebrew environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -x /opt/homebrew/bin/brew
+          test "$(/opt/homebrew/bin/brew --prefix)" = /opt/homebrew
+          /opt/homebrew/bin/brew bundle list \
+            --file="$PWD/Brewfile" --formula >/dev/null
+
+          test_home="$(mktemp -d)"
+          trap 'rm -rf "$test_home"' EXIT
+          HOME="$test_home" ./install.sh >/dev/null
+          test ! -e "$test_home/.Brewfile"
+          test ! -e "$test_home/.post-install.sh"
+          test ! -e "$test_home/.AGENTS.md"
+          test ! -e "$test_home/.CLAUDE.md"
+
+          expected=(
+            emacs gitconfig tinted-shell tmux.conf zlogin zlogout
+            zpreztorc zprofile zshenv zshrc
+          )
+          for file in "${expected[@]}"; do
+            target="$test_home/.$file"
+            test -L "$target"
+            test "$(readlink "$target")" = "$PWD/$file"
+          done
+          test -d "$test_home/.claude" && test ! -L "$test_home/.claude"
+          test "$(readlink "$test_home/.claude/settings.json")" = \
+            "$PWD/claude/settings.json"
+
+          HOME="$test_home" ZDOTDIR="$test_home" /bin/zsh -dfc '
+            source "$ZDOTDIR/.zprofile"
+            [[ $HOMEBREW_PREFIX == /opt/homebrew ]]
+            [[ $HOMEBREW_CELLAR == /opt/homebrew/Cellar ]]
+            [[ $HOMEBREW_REPOSITORY == /opt/homebrew ]]
+            (( path[(Ie)/opt/homebrew/bin] ))
+            (( fpath[(Ie)/opt/homebrew/share/zsh/site-functions] ))
+            [[ $INFOPATH == /opt/homebrew/share/info:* ]]
+          '

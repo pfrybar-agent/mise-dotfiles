@@ -1,0 +1,16 @@
+[tools]
+node = "24"  # required runtime for diff-so-fancy
+atuin = "latest"
+"npm:diff-so-fancy" = "latest"
+
+[bootstrap.repos."~/.zprezto"]
+url = "https://github.com/sorin-ionescu/prezto.git"
+submodules = true
+
+[dotfiles."~"]
+source = "~/.dotfiles/home"
+mode = "copy"
+dot_prefix = true
+
+[tasks.bootstrap]
+run = "bash ~/.dotfiles/post-install.sh"

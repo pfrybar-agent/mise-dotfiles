@@ -1,0 +1,4 @@
+[tools]
+coder = "latest"
+k9s = "latest"
+kubectl = "latest"
