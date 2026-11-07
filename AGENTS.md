@@ -1,72 +1,70 @@
-# Agent guide
+# AGENTS.md
 
-Symlink-based dotfiles for macOS and Linux: Zsh with Prezto, Git, tmux, Emacs,
-asdf, Atuin, and a Tomorrow Night terminal palette. `README.md` documents the
-setup in detail; read it before changing behavior.
+Dotfiles and user tools for macOS and Linux, applied with mise. `mise bootstrap`
+clones this repo to `~/.dotfiles`, makes it mise's global config, installs the
+tools, copies the dotfiles into `~` and runs `post-install.sh`. `README.md` is
+for people setting up a machine.
 
 ## Layout
 
-- `install.sh` links every top-level file into `$HOME` as `.<name>`, so `zshrc`
-  becomes `~/.zshrc`. A new file at the root that is not a dotfile must be added
-  to the skip list in `install.sh`, the skipped-files list in `README.md`, and
-  the `test ! -e` checks in the workflow.
-- `post-install.sh` holds slower setup that needs the network, such as
-  installing Emacs packages. The workbench image runs it on every container
-  start, so it must be safe to rerun and quiet when it succeeds.
-- `Brewfile` lists the macOS packages.
-- `tinted-shell` is vendored. Update it from upstream rather than editing or
-  reformatting it.
-- Credentials and secrets never go in the repository. `gitconfig` holds the
-  default Git identity, and machine-specific settings belong in
-  `~/.gitconfig.local` and `~/.zshrc.local`. Keep the include of
-  `~/.gitconfig.local` at the end of `gitconfig` so it can override the rest.
+- `config.toml`: tools for every machine, the Prezto clone, the dotfiles copy
+  and the `bootstrap` task.
+- `config.workbench.toml`, `config.personal.toml`: extra tools for
+  `mise -E workbench` (coding agents) and `mise -E personal`.
+- `home/dot-*`: copied to `~/.*`, so `home/dot-zshrc` becomes `~/.zshrc`. Edit
+  them here: the next bootstrap overwrites edits made in `~`.
+- `post-install.sh`: the `bootstrap` task. It runs on every bootstrap, so keep
+  it safe to rerun and quiet when it succeeds.
+- `Brewfile`: what macOS needs before mise takes over.
+- `home/dot-tinted-shell` is vendored: update it from upstream, don't edit it.
 
-## Compatibility
-
-- Everything must work on both macOS and Linux.
-- Stay compatible with the minimum versions in `README.md`: Git 2.37, tmux 3.5,
-  Emacs 27, and standalone asdf 0.16.
-
-## Style
-
-- Shell scripts use Bash with `set -euo pipefail`, 4-space indentation, and
-  short lowercase comments.
-- Zsh files start with the `# -*- mode: sh -*-` header.
-- Wrap Markdown prose at 80 columns.
-
-## Testing
-
-`.github/workflows/test.yml` tests the configuration on Linux and macOS. Update
-it with any change in behavior. Before committing, run at least:
+## Test
 
 ```sh
-bash -n install.sh && bash -n post-install.sh
-shellcheck install.sh post-install.sh
-for file in zshenv zprofile zshrc zpreztorc zlogin zlogout; do
+bash -n post-install.sh && shellcheck post-install.sh
+for file in home/dot-zshenv home/dot-zprofile home/dot-zshrc \
+            home/dot-zpreztorc home/dot-zlogin home/dot-zlogout; do
     zsh -n "$file"
 done
+git config --file home/dot-gitconfig --list >/dev/null
 ```
 
-## Commits
+A full bootstrap into a throwaway home (needs the network; `--from` clones the
+committed state, so commit first):
 
-- Write a single short imperative subject line with no body, such as
-  `Install Emacs packages with post-install.sh`.
+```sh
+home=$(mktemp -d)
+HOME=$home mise bootstrap --from "$PWD" --from-dir "$home/.dotfiles" --config-dir . --yes
+```
+
+`.github/workflows/test.yml` bootstraps a fresh home on Ubuntu 26.04 (the
+workbench image's release) and macOS, then checks Git, Emacs, tmux, Prezto and
+Atuin. Update it with any change in behavior.
+
+## Rules
+
+- Everything must work on macOS and Linux, including the workbench image.
+- Secrets never go in the repository. Machine-specific settings belong in
+  `~/.gitconfig.local` and `~/.zshrc.local`; keep the include of
+  `~/.gitconfig.local` last in `home/dot-gitconfig`.
+- Shell scripts use Bash with `set -euo pipefail`, 4-space indentation and
+  short lowercase comments. Zsh files start with `# -*- mode: sh -*-`.
+- Wrap Markdown prose at 80 columns.
+
+## Commits and pull requests
+
+- Commit on a branch, never `main`. Write a single short imperative subject
+  line with no body, such as `Install Emacs packages with post-install.sh`.
 - End the message with a `Co-Authored-By` trailer naming the agent and model,
-  such as `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>` or
-  `Co-Authored-By: GPT-5.6 Codex <noreply@openai.com>`.
-- Commits are SSH-signed. If signing fails, stop and report it instead of
-  committing with `--no-gpg-sign`.
-- Commit on a branch, never `main`.
-- You cannot push to `origin`: your GitHub token belongs to an account without
-  write access. Push to that account's fork and open a pull request; the
-  maintainer reviews and merges it.
+  such as `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
+- Commits are SSH-signed. If signing fails, stop and report it; don't use
+  `--no-gpg-sign`.
+- You can't push to `origin`. Push to your account's fork and open a pull
+  request; the maintainer reviews and merges it:
 
   ```sh
-  # once per clone: add the fork (created if missing) as `fork`, and make
-  # pfrybar/mise-dotfiles the repo that pull requests target
-  gh repo fork --remote --remote-name fork
-  gh repo set-default pfrybar/mise-dotfiles
-
+  gh repo fork --remote --remote-name fork      # once per clone
+  gh repo set-default pfrybar/mise-dotfiles     # once per clone
   git push -u fork HEAD
   gh pr create --fill
   ```
