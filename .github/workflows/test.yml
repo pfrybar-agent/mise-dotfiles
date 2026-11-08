@@ -146,8 +146,9 @@ jobs:
             "$(tmux -L "$socket" list-keys -T prefix C-Space)"
 
           # Each check exits on failure: zsh -c only reports the last command's
-          # status, and errexit ignores negated commands.
-          ZDOTDIR="$HOME" TERM=xterm-256color zsh -lic '
+          # status, and errexit ignores negated commands. PATH starts without
+          # mise's shims, so the shell files must put mise's tools on it.
+          PATH=/usr/local/bin:/usr/bin:/bin ZDOTDIR="$HOME" TERM=xterm-256color zsh -lic '
             for module in environment editor history utility completion syntax-highlighting prompt; do
               zstyle -t ":prezto:module:$module" loaded || exit 1
             done
@@ -156,6 +157,8 @@ jobs:
             [[ $PURE_GIT_UNTRACKED_DIRTY == 0 ]] || exit 1
             zstyle -t :prezto:module:python loaded && exit 1
             (( $+functions[_atuin_search] )) || exit 1
+            [[ $MISE_SHELL == zsh ]] || exit 1
+            (( $+commands[atuin] && $+commands[diff-so-fancy] )) || exit 1
           '
 
   macos:
@@ -199,4 +202,11 @@ jobs:
             (( path[(Ie)/opt/homebrew/bin] )) || exit 1
             (( fpath[(Ie)/opt/homebrew/share/zsh/site-functions] )) || exit 1
             [[ $INFOPATH == /opt/homebrew/share/info:* ]] || exit 1
+            (( path[(Ie)$HOME/.local/share/mise/shims] )) || exit 1
+          '
+
+          # A login shell finds mise's tools and activates mise.
+          ZDOTDIR="$HOME" TERM=xterm-256color zsh -lic '
+            [[ $MISE_SHELL == zsh ]] || exit 1
+            (( $+commands[atuin] && $+commands[diff-so-fancy] )) || exit 1
           '
