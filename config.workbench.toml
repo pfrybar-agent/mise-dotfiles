@@ -2,3 +2,10 @@
 claude = "latest"
 codex = "latest"
 pi = "latest"
+
+# Paseo plugins, pinned to release tags. Paseo loads each one from its folder
+# through a "directory" entry in ~/.paseo/config.json. Neither needs a build
+# step; check a new release's paseo-plugin.json for one before bumping a tag.
+[bootstrap.repos]
+"~/.local/share/paseo-plugins/claude-code-entrypoint-env" = { url = "https://github.com/getpaseo/claude-code-entrypoint-env.git", ref = "v1.0.1" }
+"~/.local/share/paseo-plugins/zerosub" = { url = "https://github.com/kapybara-org/zerosub.git", ref = "v1.5.1" }
