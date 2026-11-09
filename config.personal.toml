@@ -2,3 +2,4 @@
 coder = "latest"
 k9s = "latest"
 kubectl = "latest"
+kubectx = "latest"
